@@ -5,7 +5,7 @@
 
     --bg-borderRadiusSys: 25px;
 
-    --bg-borderRadiusIcon: 17px;
+    --bg-borderRadiusIcon: 31px;
     --bg-scaleIcon: 0.9;
 
     --bg-wallpaperHome: url("https://quandz24-ui.github.io/OriginWEB/originData/wallpaper/wallpaper_2.png");
@@ -333,4 +333,5 @@ right {
     width: 50%;
     justify-content: end;
 }
+
 
