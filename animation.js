@@ -6,199 +6,281 @@ let timeOutOpeningApp = [];
 let currentOpeningElApp = null;
 let currentOpeningEl = null;
 
-let scriptForCloseApp = function () {};
-function addScriptForCloseApp(script) {
-    scriptForCloseApp = script;
-    closeApp = function () {
-        if (currentOpeningEl.parentElement != currentAppScreen) {
-            if (currentOpeningEl.parentElement.id != "favApp") {
-                closeAppToCenter();
-                return;
-            }
-        }
-        const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
+const APP_DISPLAY_SELECTOR = ".appDisplay";
+const OPEN_CLASS = "open";
+const HIDDEN_CLASS = "hidden";
 
-        currentOpeningElApp.style.transition = ``;
-        currentOpeningElApp.style.transform = ``;
-        const appel = currentOpeningElApp;
-        const el = currentOpeningEl;
+const OPEN_POINTER_DELAY = 200;
+const CLOSE_DELAY_DEFAULT = 700;
+const CLOSE_DELAY_SCRIPT = 800;
+const CLOSE_TO_CENTER_DURATION = 400;
+const OPEN_SWITCH_DURATION = 400;
+const OPEN_ISLAND_DURATION = 650;
+const OPEN_ISLAND_TIMEOUT = 650;
+const OPEN_CAMERA_DURATION = 650;
+const OPEN_CAMERA_TIMEOUT = 650;
 
-        currentOpeningElApp = null;
-        currentOpeningEl = null;
+const MAX_PULL_Y = 140;
+const SCALE_DIVISOR = 280;
 
-        allApp.classList.remove("open");
-        wallpaperHome.classList.remove("open");
-        appel.classList.remove("open");
+let pendingCloseScript = null;
+let closeDelay = CLOSE_DELAY_DEFAULT;
+let closeToCenterCheck = defaultCloseToCenterCheck;
 
-        clearTimeout(timeOutOpeningApp[appel.id]);
-        timeOutOpeningApp[appel.id] = null;
+function getAppDisplay(appEl) {
+    return appEl.querySelector(APP_DISPLAY_SELECTOR);
+}
 
-        appel.style.pointerEvents = "";
+function clearTimer(store, id) {
+    const t = store[id];
+    if (!t) return;
+    clearTimeout(t);
+    store[id] = null;
+}
 
-        timeOutClosingApp[appel.id] = setTimeout(() => {
-            appDisplay.style.display = "";
-            el.classList.remove("hidden");
-            appel.style.opacity = "";
-            timeOutClosingApp[appel.id] = null;
-            scrollAppScreen.style.pointerEvents = "";
-            removeScript(`./appData/${appel.id}/js/open/open.js`);
-            runScript(`./appData/${appel.id}/js/close/close.js`);
-        }, 800 * speed);
-        scriptForCloseApp();
-        closeApp = function () {
-            if (currentOpeningEl.parentElement != currentAppScreen) {
-                if (currentOpeningEl.parentElement.id != "favApp") {
-                    closeAppToCenter();
-                    return;
-                }
-            }
-            const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
+function setOpenClasses(appEl, isOpen) {
+    allApp.classList.toggle(OPEN_CLASS, isOpen);
+    wallpaperHome.classList.toggle(OPEN_CLASS, isOpen);
+    if (appEl) appEl.classList.toggle(OPEN_CLASS, isOpen);
+}
 
-            currentOpeningElApp.style.transition = ``;
-            currentOpeningElApp.style.transform = ``;
-            const appel = currentOpeningElApp;
-            const el = currentOpeningEl;
+function hideIcon(iconEl, hide) {
+    if (!iconEl) return;
+    iconEl.classList.toggle(HIDDEN_CLASS, hide);
+}
 
-            currentOpeningElApp = null;
-            currentOpeningEl = null;
+function setScrollPointerEvents(enabled) {
+    scrollAppScreen.style.pointerEvents = enabled ? "" : "none";
+}
 
-            allApp.classList.remove("open");
-            wallpaperHome.classList.remove("open");
-            appel.classList.remove("open");
+function runOpenScript(appId) {
+    removeScript(`/OriginWEB/appData/${appId}/js/close/close.js`);
+    runScript(`/OriginWEB/appData/${appId}/js/open/open.js`);
+}
 
-            clearTimeout(timeOutOpeningApp[appel.id]);
-            timeOutOpeningApp[appel.id] = null;
+function runCloseScript(appId) {
+    removeScript(`/OriginWEB/appData/${appId}/js/open/open.js`);
+    runScript(`/OriginWEB/appData/${appId}/js/close/close.js`);
+}
 
-            appel.style.pointerEvents = "";
+function cancelStoredAnimation(appEl) {
+    const anim = appAnimations[appEl.id];
+    if (!anim) return;
+    anim.cancel();
+    delete appAnimations[appEl.id];
+}
 
-            timeOutClosingApp[appel.id] = setTimeout(() => {
-                appDisplay.style.display = "";
-                el.classList.remove("hidden");
-                appel.style.opacity = "";
-                timeOutClosingApp[appel.id] = null;
-                scrollAppScreen.style.pointerEvents = "";
-                removeScript(`./appData/${appel.id}/js/open/open.js`);
-                runScript(`./appData/${appel.id}/js/close/close.js`);
-            }, 800 * speed);
-        };
+function setStoredAnimation(appEl, anim, onfinish) {
+    cancelStoredAnimation(appEl);
+    appAnimations[appEl.id] = anim;
+    anim.onfinish = () => {
+        if (onfinish) onfinish();
+        delete appAnimations[appEl.id];
     };
+}
+
+function cancelElementAnimation(appEl) {
+    if (!appEl || !appEl.anim) return;
+    appEl.anim.onfinish = null;
+    appEl.anim.cancel();
+    appEl.anim = null;
+}
+
+function defaultCloseToCenterCheck() {
+    if (!currentOpeningEl) return false;
+    return isVisuallyInsidePhone(currentOpeningEl.parentElement);
+}
+
+function shouldCloseToCenterByParent() {
+    if (!currentOpeningEl || !currentOpeningEl.parentElement) return false;
+    const parent = currentOpeningEl.parentElement;
+    return parent != currentAppScreen && parent.id != "favApp";
+}
+
+function addScriptForCloseApp(script) {
+    pendingCloseScript = script;
+    closeDelay = CLOSE_DELAY_SCRIPT;
+    closeToCenterCheck = shouldCloseToCenterByParent;
 }
 
 function openApp(el) {
     currentOpeningEl = el;
     currentOpeningElApp = document.getElementById(currentOpeningEl.dataset.app);
-    const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
+    if (currentOpeningElApp.classList.contains("multiClick")) {
+        currentOpeningElApp.classList.remove("multiClick");
+    }
+    const appDisplay = getAppDisplay(currentOpeningElApp);
 
     currentOpeningElApp.style.transition = ``;
 
-    allApp.classList.add("open");
-    wallpaperHome.classList.add("open");
-    currentOpeningElApp.classList.add("open");
-
+    setOpenClasses(currentOpeningElApp, true);
     appDisplay.style.display = "flex";
 
-    currentOpeningEl.classList.add("hidden");
-    scrollAppScreen.style.pointerEvents = "none";
+    hideIcon(currentOpeningEl, true);
+    setScrollPointerEvents(false);
 
-    clearTimeout(timeOutClosingApp[currentOpeningElApp.id]);
-    timeOutClosingApp[currentOpeningElApp.id] = null;
+    clearTimer(timeOutClosingApp, currentOpeningElApp.id);
 
-    const appel = currentOpeningElApp;
-    timeOutOpeningApp[currentOpeningElApp.id] = setTimeout(() => {
-        appel.style.pointerEvents = "auto";
-        timeOutOpeningApp[appel.id] = null;
-    }, 400 * speed);
+    const appEl = currentOpeningElApp;
+    timeOutOpeningApp[appEl.id] = setTimeout(() => {
+        appEl.style.pointerEvents = "auto";
+        timeOutOpeningApp[appEl.id] = null;
+    }, OPEN_POINTER_DELAY * speed);
 
-    removeScript(`./appData/${currentOpeningEl.dataset.app}/js/close/close.js`);
-    runScript(`./appData/${currentOpeningEl.dataset.app}/js/open/open.js`);
+    runOpenScript(currentOpeningEl.dataset.app);
 }
 
 let scaleAllAppReverse = 1 / 0.86;
 function closeApp() {
-    if (isVisuallyInsidePhone(currentOpeningEl.parentElement)) {
-        closeAppToCenter();
-        return;
-    }
-    const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
-
-    currentOpeningElApp.style.transition = ``;
-    currentOpeningElApp.style.transform = ``;
-    const appel = currentOpeningElApp;
-    const el = currentOpeningEl;
-
-    currentOpeningElApp = null;
-    currentOpeningEl = null;
-
-    allApp.classList.remove("open");
-    wallpaperHome.classList.remove("open");
-    appel.classList.remove("open");
-
-    clearTimeout(timeOutOpeningApp[appel.id]);
-    timeOutOpeningApp[appel.id] = null;
-
-    appel.style.pointerEvents = "";
-
-    timeOutClosingApp[appel.id] = setTimeout(() => {
-        appDisplay.style.display = "";
-        el.classList.remove("hidden");
-        appel.style.opacity = "";
-        timeOutClosingApp[appel.id] = null;
-        scrollAppScreen.style.pointerEvents = "";
-        removeScript(`./appData/${appel.id}/js/open/open.js`);
-        runScript(`./appData/${appel.id}/js/close/close.js`);
-    }, 700 * speed);
+    const didClose = doCloseApp({
+        delayMs: closeDelay * speed,
+        shouldCloseToCenter: closeToCenterCheck,
+        afterClose: pendingCloseScript,
+    });
+    if (didClose) pendingCloseScript = null;
 }
-function closeAppToCenter() {
-    const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
 
-    currentOpeningElApp.style.transition = `all 0s 0.4s, opacity 0s 0s`;
-    currentOpeningElApp.style.transform = ``;
-    const appel = currentOpeningElApp;
-    const el = currentOpeningEl;
+function doCloseApp({delayMs, shouldCloseToCenter, afterClose}) {
+    if (!currentOpeningElApp || !currentOpeningEl) return false;
+
+    if (shouldCloseToCenter && shouldCloseToCenter()) {
+        closeAppToCenter();
+        return false;
+    }
+
+    const appEl = currentOpeningElApp;
+    const iconEl = currentOpeningEl;
+    const appDisplay = getAppDisplay(appEl);
+
+    appEl.style.transition = ``;
+    appEl.style.transform = ``;
 
     currentOpeningElApp = null;
     currentOpeningEl = null;
 
-    allApp.classList.remove("open");
-    wallpaperHome.classList.remove("open");
+    setOpenClasses(appEl, false);
 
-    clearTimeout(timeOutOpeningApp[appel.id]);
-    timeOutOpeningApp[appel.id] = null;
+    clearTimer(timeOutOpeningApp, appEl.id);
 
-    appel.style.pointerEvents = "";
-    appel.style.opacity = "";
-    el.classList.remove("hidden");
+    appEl.style.pointerEvents = ``;
 
-    appel.anim = appel.animate(
+    timeOutClosingApp[appEl.id] = setTimeout(() => {
+        appDisplay.style.display = ``;
+        hideIcon(iconEl, false);
+        appEl.style.opacity = ``;
+        timeOutClosingApp[appEl.id] = null;
+        setScrollPointerEvents(true);
+        runCloseScript(appEl.id);
+    }, delayMs);
+
+    if (afterClose) afterClose();
+
+    return true;
+}
+
+function closeAppToCenter() {
+    closeAppToCenterCore({easing: null});
+}
+
+function closeAppToCenterWithScript(script) {
+    closeAppToCenterCore({easing: "ease-out", afterFinish: script});
+}
+
+function closeAppToCenterCore({easing, afterFinish}) {
+    if (!currentOpeningElApp || !currentOpeningEl) return;
+
+    const appEl = currentOpeningElApp;
+    const iconEl = currentOpeningEl;
+    const appDisplay = getAppDisplay(appEl);
+
+    appEl.style.transition = `all 0s 0.4s, opacity 0s 0s`;
+    appEl.style.transform = ``;
+
+    currentOpeningElApp = null;
+    currentOpeningEl = null;
+
+    allApp.classList.remove(OPEN_CLASS);
+    wallpaperHome.classList.remove(OPEN_CLASS);
+
+    clearTimer(timeOutOpeningApp, appEl.id);
+
+    appEl.style.pointerEvents = ``;
+    appEl.style.opacity = ``;
+    hideIcon(iconEl, false);
+
+    const anim = appEl.animate(
         [
-            {transform: getComputedStyle(appel).transform},
+            {transform: getComputedStyle(appEl).transform},
             {opacity: 1},
-            {
-                transform: "translateY(-150px) scale(0.01)",
-                opacity: 0,
-            },
+            {transform: "translateY(-150px) scale(0.01)", opacity: 0},
         ],
         {
-            duration: 400 * speed,
+            duration: CLOSE_TO_CENTER_DURATION * speed,
+            easing: easing || undefined,
             composite: "replace",
         }
     );
 
-    appel.anim.onfinish = () => {
-        appDisplay.style.display = "";
+    appEl.anim = anim;
+    anim.onfinish = () => {
+        appDisplay.style.display = ``;
 
-        appel.classList.remove("open");
-        scrollAppScreen.style.pointerEvents = "";
-        removeScript(`./appData/${appel.id}/js/open/open.js`);
-        runScript(`./appData/${appel.id}/js/close/close.js`);
+        appEl.classList.remove(OPEN_CLASS);
+        setScrollPointerEvents(true);
+        runCloseScript(appEl.id);
 
-        appel.anim.onfinish = null;
-        appel.anim = null;
+        if (afterFinish) afterFinish();
+
+        appEl.anim.onfinish = null;
+        appEl.anim = null;
     };
+}
+
+function closeAppToLeft() {
+    if (!currentOpeningElApp || !currentOpeningEl) return;
+
+    const appEl = currentOpeningElApp;
+    const iconEl = currentOpeningEl;
+    const appDisplay = getAppDisplay(appEl);
+
+    appEl.style.transition = `all 0s`;
+    appEl.style.transform = ``;
+
+    currentOpeningElApp = null;
+    currentOpeningEl = null;
+
+    allApp.classList.remove(OPEN_CLASS);
+    wallpaperHome.classList.remove(OPEN_CLASS);
+
+    clearTimer(timeOutOpeningApp, appEl.id);
+
+    appEl.style.pointerEvents = ``;
+    appEl.style.opacity = ``;
+    hideIcon(iconEl, false);
+
+    const anim = appEl.animate(
+        [
+            {transform: getComputedStyle(appEl).transform},
+            {opacity: 1},
+            {transform: "translateX(-100%) scale(0.8)", opacity: 1},
+        ],
+        {
+            duration: OPEN_SWITCH_DURATION * speed,
+            easing: "ease-out",
+        }
+    );
+
+    setStoredAnimation(appEl, anim, () => {
+        appDisplay.style.display = ``;
+        appEl.classList.remove(OPEN_CLASS);
+        setScrollPointerEvents(true);
+        runCloseScript(appEl.id);
+    });
 }
 
 function isVisuallyInsidePhone(el) {
     const e = el.getBoundingClientRect();
+
     return !(
         e.left >= phoneRect.left &&
         e.top >= phoneRect.top &&
@@ -207,12 +289,13 @@ function isVisuallyInsidePhone(el) {
     );
 }
 
-function updateTransform(y, x) {
-    y = Math.max(0, y);
-    y = Math.min(140, y);
+function updateTransform(y, x, d = "0.1") {
+    const clampedY = Math.max(0, Math.min(MAX_PULL_Y, y));
 
-    currentOpeningElApp.style.transition = `all 0.08s`;
-    currentOpeningElApp.style.transform = `translateX(${x}px) translateY(${-y}px) scale(${1 - y / 280})`;
+    currentOpeningElApp.style.transition = `all ${d}s`;
+    currentOpeningElApp.style.transform = `translateX(${x}px) translateY(${-clampedY}px) scale(${
+        1 - clampedY / SCALE_DIVISOR
+    })`;
 }
 
 function resetpop() {
@@ -225,172 +308,153 @@ let startX = 0;
 let deltaY = 0;
 let deltaX = 0;
 let dragging = false;
+let rafId = 0;
+let rafDeltaY = 0;
+let rafDeltaX = 0;
+let rafDuration = "0.1";
 
-nav.addEventListener("touchstart", (e) => {
+function scheduleTransformUpdate(y, x, d) {
+    rafDeltaY = y;
+    rafDeltaX = x;
+    rafDuration = d;
+
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        if (!currentOpeningElApp) return;
+        updateTransform(rafDeltaY, rafDeltaX, rafDuration);
+    });
+}
+
+function onTouchStartNav(e) {
     if (!currentOpeningElApp) return;
-    currentOpeningEl.classList.add("hidden");
+    hideIcon(currentOpeningEl, true);
+
     startY = e.touches[0].clientY;
     startX = e.touches[0].clientX;
-
     deltaY = 0;
     deltaX = 0;
-});
-
-nav.addEventListener(
-    "touchmove",
-    (e) => {
-        e.preventDefault();
-        if (!currentOpeningElApp) return;
-        deltaY = startY - e.touches[0].clientY;
-        deltaX = e.touches[0].clientX - startX;
-        updateTransform(deltaY, deltaX);
-    },
-    {
-        passive: false,
-    }
-);
-
-nav.addEventListener("touchend", () => {
+}
+function onTouchMoveNav(e) {
+    e.preventDefault();
     if (!currentOpeningElApp) return;
+
+    deltaY = startY - e.touches[0].clientY;
+    deltaX = e.touches[0].clientX - startX;
+    scheduleTransformUpdate(deltaY, deltaX, "0.1");
+}
+function onTouchEndNav() {
+    if (!currentOpeningElApp) return;
+
+    if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+    }
     if (deltaY > 40) closeApp();
     else resetpop();
+
     deltaY = 0;
     deltaX = 0;
-});
-
-nav.addEventListener("mousedown", (e) => {
+}
+function onMouseDownNav(e) {
     deltaY = 0;
     deltaX = 0;
     startY = 0;
     startX = 0;
 
     if (!currentOpeningElApp) return;
+
     currentOpeningElApp.style.pointerEvents = "none";
-    currentOpeningEl.classList.add("hidden");
+    if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+    }
+    hideIcon(currentOpeningEl, true);
     dragging = true;
+
     startY = e.clientY;
     startX = e.clientX;
-});
-
-window.addEventListener("mousemove", (e) => {
+}
+function onMouseMoveNav(e) {
     if (!dragging || !currentOpeningElApp) return;
     deltaY = startY - e.clientY;
     deltaX = e.clientX - startX;
-    updateTransform(deltaY, deltaX);
-});
 
-window.addEventListener("mouseup", () => {
+    scheduleTransformUpdate(deltaY, deltaX, "0");
+
+    // navOvlay.style.transform = `translateX(${deltaX}px) translateY(${-deltaY}px)`;
+}
+function onMouseUpNav() {
     if (!dragging || !currentOpeningElApp) return;
+
     currentOpeningElApp.style.pointerEvents = "all";
     dragging = false;
+
+    // navOvlay.style.transform = "";
+    if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+    }
     if (deltaY > 40) closeApp();
     else resetpop();
-});
+}
+function addNavDragListeners() {
+    nav.addEventListener("touchstart", onTouchStartNav);
+    nav.addEventListener("touchmove", onTouchMoveNav, {passive: false});
+    nav.addEventListener("touchend", onTouchEndNav);
 
-// Lưu animation hiện tại theo id app
-const appAnimations = {};
+    nav.addEventListener("mousedown", onMouseDownNav);
+    window.addEventListener("mousemove", onMouseMoveNav);
+    window.addEventListener("mouseup", onMouseUpNav);
+}
+function removeNavDragListeners() {
+    nav.removeEventListener("touchstart", onTouchStartNav);
+    nav.removeEventListener("touchmove", onTouchMoveNav);
+    nav.removeEventListener("touchend", onTouchEndNav);
 
-function closeAppToCenterWithScript(script) {
-    const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
-
-    currentOpeningElApp.style.transition = `all 0s 0.4s, opacity 0s 0s`;
-    currentOpeningElApp.style.transform = ``;
-    const appel = currentOpeningElApp;
-    const el = currentOpeningEl;
-
-    currentOpeningElApp = null;
-    currentOpeningEl = null;
-
-    allApp.classList.remove("open");
-    wallpaperHome.classList.remove("open");
-
-    clearTimeout(timeOutOpeningApp[appel.id]);
-    timeOutOpeningApp[appel.id] = null;
-
-    appel.style.pointerEvents = "";
-    appel.style.opacity = "";
-    el.classList.remove("hidden");
-
-    const anim = appel.animate(
-        [
-            {transform: getComputedStyle(appel).transform},
-            {opacity: 1},
-            {
-                transform: "translateY(-150px) scale(0.01)",
-                opacity: 0,
-            },
-        ],
-        {
-            duration: 400 * speed,
-            easing: "ease-out",
-            composite: "replace",
-        }
-    );
-
-    anim.onfinish = () => {
-        appDisplay.style.display = "";
-
-        appel.classList.remove("open");
-        scrollAppScreen.style.pointerEvents = "";
-        removeScript(`./appData/${appel.id}/js/open/open.js`);
-        runScript(`./appData/${appel.id}/js/close/close.js`);
-
-        script();
-    };
+    nav.removeEventListener("mousedown", onMouseDownNav);
+    window.removeEventListener("mousemove", onMouseMoveNav, {passive: false});
+    window.removeEventListener("mouseup", onMouseUpNav);
 }
 
-function closeAppToLeft() {
-    const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
-
-    // Nếu app đang có animation mở -> cancel
-
-    currentOpeningElApp.style.transition = `all 0s`;
-    currentOpeningElApp.style.transform = ``;
-    const appel = currentOpeningElApp;
-    const el = currentOpeningEl;
-
-    currentOpeningElApp = null;
-    currentOpeningEl = null;
-
-    allApp.classList.remove("open");
-    wallpaperHome.classList.remove("open");
-
-    clearTimeout(timeOutOpeningApp[appel.id]);
-    timeOutOpeningApp[appel.id] = null;
-
-    appel.style.pointerEvents = "";
-    appel.style.opacity = "";
-    el.classList.remove("hidden");
-    const animAPI = appAnimations[appel.id];
-
-    const anim = appel.animate(
-        [
-            {transform: getComputedStyle(appel).transform},
-            {opacity: 1},
-            {transform: "translateX(-100%) scale(0.8)", opacity: 1},
-        ],
-        {
-            duration: 400 * speed,
-            easing: "ease-out",
-        }
-    );
-    if (animAPI) {
-        animAPI.cancel();
+function navStyle(style) {
+    if (style == "buttonStyle" && nav.className != "buttonStyle") {
+        removeNavDragListeners();
+        nav.className = style;
+        nav.onclick = function () {
+            if (currentOpeningElApp) closeApp();
+        };
+        localStorage.setItem("nav", style);
+    } else if (style == "swipe" && nav.className != "swipe") {
+        addNavDragListeners();
+        nav.className = style;
+        nav.onclick = null;
+        localStorage.setItem("nav", style);
     }
+}
 
-    // Lưu animation vào object
-    appAnimations[appel.id] = anim;
+// Store running animations by app id
+const appAnimations = {};
 
-    anim.onfinish = () => {
-        appDisplay.style.display = "";
-        appel.classList.remove("open");
-        scrollAppScreen.style.pointerEvents = "";
-        removeScript(`./appData/${appel.id}/js/open/open.js`);
-        runScript(`./appData/${appel.id}/js/close/close.js`);
+function setupOpenById(idApp, transitionValue) {
+    currentOpeningElApp = document.getElementById(idApp);
+    currentOpeningEl = document.querySelector(`[data-app='${idApp}']`);
+    const appEl = currentOpeningElApp;
+    const appDisplay = getAppDisplay(appEl);
 
-        // Xoá animation đã xong
-        delete appAnimations[appel.id];
-    };
+    appEl.style.transition = transitionValue;
+
+    setOpenClasses(appEl, true);
+    appDisplay.style.display = "flex";
+
+    hideIcon(currentOpeningEl, true);
+    setScrollPointerEvents(false);
+
+    clearTimer(timeOutClosingApp, appEl.id);
+
+    appEl.style.pointerEvents = "auto";
+
+    return {appEl, iconEl: currentOpeningEl, appDisplay};
 }
 
 function openAppByID(idApp) {
@@ -401,39 +465,18 @@ function openAppByID(idApp) {
         }, `Enter password to open ${document.querySelector(`[data-app='${idApp}'] label`).textContent.trim()} app`);
         return;
     }
-    const alreadyOpen1 = !currentOpeningElApp;
-    const alreadyOpen = currentOpeningElApp && currentOpeningElApp.id != idApp;
-    if (alreadyOpen) {
+    const hadNoOpenApp = !currentOpeningElApp;
+    const switchingApp = currentOpeningElApp && currentOpeningElApp.id != idApp;
+    if (switchingApp) {
         closeAppToLeft();
     }
 
-    currentOpeningElApp = document.getElementById(idApp);
-    currentOpeningEl = document.querySelector(`[data-app='${idApp}']`);
-    const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
+    const {appEl} = setupOpenById(idApp, "none");
 
-    // Nếu app đang có animation đóng -> cancel
+    cancelStoredAnimation(appEl);
 
-    currentOpeningElApp.style.transition = `none`;
-
-    allApp.classList.add("open");
-    wallpaperHome.classList.add("open");
-    currentOpeningElApp.classList.add("open");
-
-    appDisplay.style.display = "flex";
-
-    currentOpeningEl.classList.add("hidden");
-    scrollAppScreen.style.pointerEvents = "none";
-
-    clearTimeout(timeOutClosingApp[currentOpeningElApp.id]);
-    timeOutClosingApp[currentOpeningElApp.id] = null;
-
-    const appel = currentOpeningElApp;
-    appel.style.pointerEvents = "auto";
-
-    const animAPI = appAnimations[appel.id];
-
-    if (alreadyOpen) {
-        const anim = appel.animate(
+    if (switchingApp) {
+        const anim = appEl.animate(
             [
                 {transform: "translateX(330px) scale(0.8)"},
                 {transform: "translateX(200px) scale(0.8)"},
@@ -441,44 +484,27 @@ function openAppByID(idApp) {
                 {transform: "scale(1)"},
             ],
             {
-                duration: 400 * speed,
+                duration: OPEN_SWITCH_DURATION * speed,
                 easing: "ease-out",
             }
         );
-        appAnimations[appel.id] = anim;
-
-        const temp = currentOpeningEl;
-        anim.onfinish = () => {
-            removeScript(`./appData/${temp.dataset.app}/js/close/close.js`);
-            runScript(`./appData/${temp.dataset.app}/js/open/open.js`);
-
-            // Xoá animation đã xong
-            delete appAnimations[appel.id];
-        };
-    } else {
-        if (alreadyOpen1) {
-            const anim = appel.animate([{transform: "scale(0.6)", opacity: 0}, {opacity: 1}, {transform: "scale(1)"}], {
-                duration: 400 * speed,
-                easing: "ease",
-                composite: "replace",
-            });
-            appAnimations[appel.id] = anim;
-
-            const temp = currentOpeningEl;
-            anim.onfinish = () => {
-                removeScript(`./appData/${temp.dataset.app}/js/close/close.js`);
-                runScript(`./appData/${temp.dataset.app}/js/open/open.js`);
-
-                // Xoá animation đã xong
-                delete appAnimations[appel.id];
-            };
-        }
+        setStoredAnimation(appEl, anim, () => {
+            runOpenScript(appEl.id);
+        });
+    } else if (hadNoOpenApp) {
+        const anim = appEl.animate([{transform: "scale(0.6)", opacity: 0}, {opacity: 1}, {transform: "scale(1)"}], {
+            duration: OPEN_SWITCH_DURATION * speed,
+            easing: "ease",
+            composite: "replace",
+        });
+        setStoredAnimation(appEl, anim, () => {
+            runOpenScript(appEl.id);
+        });
     }
-
-    if (animAPI) animAPI.cancel();
 }
 
 function openAppByIDFromIslandWithScript(idApp, script) {
+    if (dragTarget) pointerUpIconWhileDragIconNoAnim();
     if (isLock) {
         showPasswordScreen(() => {
             hiddenLockScreen();
@@ -486,40 +512,19 @@ function openAppByIDFromIslandWithScript(idApp, script) {
         }, `Enter password to open ${document.querySelector(`[data-app='${idApp}'] label`).textContent.trim()} app`);
         return;
     }
-    const alreadyOpen1 = !currentOpeningElApp;
-    const alreadyOpen = currentOpeningElApp && currentOpeningElApp.id != idApp;
+    const hadNoOpenApp = !currentOpeningElApp;
+    const switchingApp = currentOpeningElApp && currentOpeningElApp.id != idApp;
 
-    if (alreadyOpen) {
+    if (switchingApp) {
         closeAppToLeft();
     }
 
-    currentOpeningElApp = document.getElementById(idApp);
-    currentOpeningEl = document.querySelector(`[data-app='${idApp}']`);
-    const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
+    const {appEl} = setupOpenById(idApp, "none");
 
-    // Nếu app đang có animation đóng -> cancel
+    cancelStoredAnimation(appEl);
 
-    currentOpeningElApp.style.transition = `none`;
-
-    allApp.classList.add("open");
-    wallpaperHome.classList.add("open");
-    currentOpeningElApp.classList.add("open");
-
-    appDisplay.style.display = "flex";
-
-    currentOpeningEl.classList.add("hidden");
-    scrollAppScreen.style.pointerEvents = "none";
-
-    clearTimeout(timeOutClosingApp[currentOpeningElApp.id]);
-    timeOutClosingApp[currentOpeningElApp.id] = null;
-
-    const appel = currentOpeningElApp;
-    appel.style.pointerEvents = "auto";
-
-    const animAPI = appAnimations[appel.id];
-
-    if (alreadyOpen) {
-        const anim = appel.animate(
+    if (switchingApp) {
+        const anim = appEl.animate(
             [
                 {transform: "translateX(120%) scale(0.8)"},
                 {transform: "translateX(80%) scale(0.8)"},
@@ -527,55 +532,40 @@ function openAppByIDFromIslandWithScript(idApp, script) {
                 {transform: "scale(1)"},
             ],
             {
-                duration: 400 * speed,
+                duration: OPEN_SWITCH_DURATION * speed,
                 easing: "ease-out",
             }
         );
-        appAnimations[appel.id] = anim;
+        setStoredAnimation(appEl, anim, () => {
+            runOpenScript(appEl.id);
+        });
+    } else if (hadNoOpenApp) {
+        appEl.classList.remove("animationAppOpenFromIsland");
+        requestAnimationFrame(() => {
+            appEl.classList.add("animationAppOpenFromIsland");
+        });
+        const anim = appEl.animate([], {
+            duration: OPEN_ISLAND_DURATION * speed,
+            easing: "ease-in-out",
+            composite: "replace",
+        });
+        appAnimations[appEl.id] = anim;
 
-        const temp = currentOpeningEl;
-        anim.onfinish = () => {
-            removeScript(`./appData/${temp.dataset.app}/js/close/close.js`);
-            runScript(`./appData/${temp.dataset.app}/js/open/open.js`);
-
-            // Xoá animation đã xong
-            delete appAnimations[appel.id];
-        };
-    } else {
-        if (alreadyOpen1) {
-            appel.classList.remove("animationAppOpenFromIsland");
-            requestAnimationFrame(() => {
-                appel.classList.add("animationAppOpenFromIsland");
-            });
-            const anim = appel.animate([], {
-                duration: 650 * speed,
-                easing: "ease-in-out",
-                composite: "replace",
-            });
-            appAnimations[appel.id] = anim;
-
-            const temp = currentOpeningEl;
-
-            timeOutOpeningApp[appel.id] = setTimeout(() => {
-                removeScript(`./appData/${temp.dataset.app}/js/close/close.js`);
-                runScript(`./appData/${temp.dataset.app}/js/open/open.js`);
-
-                timeOutOpeningApp[appel.id] = null;
-
-                // Xoá animation đã xong
-                delete appAnimations[appel.id];
-            }, 650);
-            setTimeout(() => {
-                appel.classList.remove("animationAppOpenFromIsland");
-            }, 650);
-        }
+        timeOutOpeningApp[appEl.id] = setTimeout(() => {
+            runOpenScript(appEl.id);
+            timeOutOpeningApp[appEl.id] = null;
+            delete appAnimations[appEl.id];
+        }, OPEN_ISLAND_TIMEOUT);
+        setTimeout(() => {
+            appEl.classList.remove("animationAppOpenFromIsland");
+        }, OPEN_ISLAND_TIMEOUT);
     }
 
-    if (animAPI) animAPI.cancel();
-    script();
+    if (script) script();
 }
 const cameraBtn = document.querySelector(".cameraBtn");
 cameraBtn.addEventListener("click", (e) => {
+    if (dragTarget) pointerUpIconWhileDragIconNoAnim();
     openAppByIDFromCameraBtn(document.querySelector(".cameraBtn").dataset.appcamerabtn);
 });
 
@@ -588,44 +578,19 @@ function openAppByIDFromCameraBtn(idApp) {
         }, `Enter password to open ${document.querySelector(`[data-app='${idApp}'] label`).textContent.trim()} app`);
         return;
     }
-    const alreadyOpen1 = !currentOpeningElApp;
-    const alreadyOpen = currentOpeningElApp && currentOpeningElApp.id != idApp;
-    if (alreadyOpen) {
+    const hadNoOpenApp = !currentOpeningElApp;
+    const switchingApp = currentOpeningElApp && currentOpeningElApp.id != idApp;
+    if (switchingApp) {
         closeAppToLeft();
     }
 
-    currentOpeningElApp = document.getElementById(idApp);
-    currentOpeningEl = document.querySelector(`[data-app='${idApp}']`);
-    const appDisplay = currentOpeningElApp.querySelector(".appDisplay");
+    const {appEl} = setupOpenById(idApp, "none");
 
-    // Nếu app đang có animation đóng -> cancel
+    cancelElementAnimation(appEl);
+    cancelStoredAnimation(appEl);
 
-    currentOpeningElApp.style.transition = `none`;
-
-    allApp.classList.add("open");
-    wallpaperHome.classList.add("open");
-    currentOpeningElApp.classList.add("open");
-
-    appDisplay.style.display = "flex";
-
-    currentOpeningEl.classList.add("hidden");
-    scrollAppScreen.style.pointerEvents = "none";
-
-    clearTimeout(timeOutClosingApp[currentOpeningElApp.id]);
-    timeOutClosingApp[currentOpeningElApp.id] = null;
-
-    const appel = currentOpeningElApp;
-    appel.style.pointerEvents = "auto";
-
-    if (appel.anim) {
-        appel.anim.onfinish = null;
-        appel.anim.cancel();
-    }
-
-    const animAPI = appAnimations[appel.id];
-    if (animAPI) animAPI.cancel();
-    if (alreadyOpen) {
-        const anim = appel.animate(
+    if (switchingApp) {
+        const anim = appEl.animate(
             [
                 {transform: "translateX(120%) scale(0.8)"},
                 {transform: "translateX(80%) scale(0.8)"},
@@ -633,48 +598,47 @@ function openAppByIDFromCameraBtn(idApp) {
                 {transform: "scale(1)"},
             ],
             {
-                duration: 400 * speed,
+                duration: OPEN_SWITCH_DURATION * speed,
                 easing: "ease-out",
             }
         );
-        appAnimations[appel.id] = anim;
+        setStoredAnimation(appEl, anim, () => {
+            runOpenScript(appEl.id);
+        });
+    } else if (hadNoOpenApp) {
+        appEl.classList.remove("animationAppOpenFromCameraBtn");
+        requestAnimationFrame(() => {
+            appEl.classList.add("animationAppOpenFromCameraBtn");
+        });
+        const anim = appEl.animate([], {
+            duration: OPEN_CAMERA_DURATION * speed,
+            easing: "ease-in-out",
+            composite: "replace",
+        });
+        appAnimations[appEl.id] = anim;
 
-        const temp = currentOpeningEl;
-        anim.onfinish = () => {
-            // Xoá animation đã xong
-            delete appAnimations[appel.id];
+        timeOutOpeningApp[appEl.id] = setTimeout(() => {
+            timeOutOpeningApp[appEl.id] = null;
+            delete appAnimations[appEl.id];
+            runOpenScript(appEl.id);
+        }, OPEN_CAMERA_TIMEOUT);
 
-            removeScript(`./appData/${temp.dataset.app}/js/close/close.js`);
-            runScript(`./appData/${temp.dataset.app}/js/open/open.js`);
-        };
-    } else {
-        if (alreadyOpen1) {
-            appel.classList.remove("animationAppOpenFromCameraBtn");
-            requestAnimationFrame(() => {
-                appel.classList.add("animationAppOpenFromCameraBtn");
-            });
-            const anim = appel.animate([], {
-                duration: 650 * speed,
-                easing: "ease-in-out",
-                composite: "replace",
-            });
-            appAnimations[appel.id] = anim;
-
-            const temp = currentOpeningEl;
-
-            timeOutOpeningApp[appel.id] = setTimeout(() => {
-                timeOutOpeningApp[appel.id] = null;
-
-                // Xoá animation đã xong
-                delete appAnimations[appel.id];
-
-                removeScript(`./appData/${temp.dataset.app}/js/close/close.js`);
-                runScript(`./appData/${temp.dataset.app}/js/open/open.js`);
-            }, 650);
-
-            setTimeout(() => {
-                appel.classList.remove("animationAppOpenFromCameraBtn");
-            }, 650);
-        }
+        setTimeout(() => {
+            appEl.classList.remove("animationAppOpenFromCameraBtn");
+        }, OPEN_CAMERA_TIMEOUT);
     }
+}
+function cancelIfAnimating(el) {
+    if (!el) return false;
+
+    const animations = el.getAnimations();
+
+    if (animations.length === 0) return false;
+
+    animations.forEach((anim) => anim.cancel());
+
+    el.style.transition = "none";
+    el.offsetHeight;
+
+    return true;
 }
